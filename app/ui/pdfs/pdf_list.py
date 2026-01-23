@@ -125,6 +125,10 @@ class PdfListWidget(QWidget):
 
         btn_share = QPushButton("Partager")
         btn_share.clicked.connect(self._share_selected)
+        
+        btn_print = QPushButton("Imprimer")
+        btn_print.clicked.connect(self._print_selected)
+        actions.addWidget(btn_print)
 
         actions.addWidget(btn_open)
         actions.addWidget(btn_delete)
@@ -327,3 +331,22 @@ class PdfListWidget(QWidget):
             os.startfile(str(target_dir.resolve()))
         except Exception:
             pass
+    
+    def _print_selected(self) -> None:
+        filename = self._selected_filename()
+        if not filename:
+            QMessageBox.information(self, "Imprimer", "Sélectionnez un PDF.")
+            return
+
+        pdf_path = exports_dir() / filename
+        if not pdf_path.exists():
+            QMessageBox.warning(self, "Imprimer", f"Fichier introuvable : {pdf_path.resolve()}")
+            return
+
+        try:
+            # Ouvre le dialogue d’impression du lecteur PDF par défaut
+            os.startfile(str(pdf_path), "print")
+        except Exception as e:
+            QMessageBox.warning(self, "Imprimer", f"Impossible de lancer l’impression : {e}")
+
+    

@@ -78,8 +78,6 @@ class InvoiceEditorWidget(QWidget):
         self.in_number = QLineEdit()
         self.in_date = QLineEdit()
         self.in_date.setText(date.today().isoformat())
-        self.in_status = QComboBox()
-        self.in_status.addItems(["DRAFT", "FINAL", "PAID", "CANCELED"])  # DB CHECK inclut PAID
 
         self.in_customer_name = QLineEdit()
         self.in_customer_address = QTextEdit()
@@ -88,7 +86,6 @@ class InvoiceEditorWidget(QWidget):
 
         form.addRow("N° de facture", self.in_number)
         form.addRow("Date", self.in_date)
-        form.addRow("Statut", self.in_status)
         form.addRow("Destinataire", self.in_customer_name)
         form.addRow("Adresse", self.in_customer_address)
         form.addRow("Code postal", self.in_customer_cp)
@@ -148,7 +145,6 @@ class InvoiceEditorWidget(QWidget):
 
         self.table.itemChanged.connect(lambda *_: self._refresh_totals())
         self.in_number.textChanged.connect(lambda *_: self._emit_tab_title())
-        self.in_status.currentTextChanged.connect(lambda *_: self._emit_tab_title())
 
     # ---------------- Data load/save ----------------
     def _load_or_init(self) -> None:
@@ -158,7 +154,6 @@ class InvoiceEditorWidget(QWidget):
         h = self.repo.get_header(self.invoice_id)
         self.in_number.setText(h.number or "")
         self.in_date.setText(h.date or "")
-        self._set_status(h.status or "DRAFT")
         self.in_customer_name.setText(h.customer_name or "")
         self.in_customer_address.setPlainText(h.customer_address or "")
         self.in_customer_cp.setText(h.customer_postal_code or "")
@@ -166,11 +161,6 @@ class InvoiceEditorWidget(QWidget):
         self.table.setRowCount(0)
         for ln in self.repo.get_lines(self.invoice_id):
             self._append_line(qty=ln.qty, description=ln.description, unit_price_cents=ln.unit_price_cents)
-
-    def _set_status(self, status: str) -> None:
-        idx = self.in_status.findText(status)
-        if idx >= 0:
-            self.in_status.setCurrentIndex(idx)
 
     def _ensure_persisted(self) -> None:
         if self.invoice_id is not None:
@@ -230,46 +220,6 @@ class InvoiceEditorWidget(QWidget):
         vat_cents = (subtotal_cents * vat_rate) // 100  # 20% => exact en cents
         total_cents = subtotal_cents + vat_cents
         return subtotal_cents, vat_cents, total_cents, lines_payload
-
-
-    def _apply_status_change_if_needed(self) -> None:
-        """
-        Applique le changement de statut demandé via les méthodes du repo.
-        Règles repo :
-        - finalize: uniquement si DRAFT
-        - mark_paid: uniquement si FINAL/PAID
-        - cancel: uniquement si FINAL/PAID
-        """
-        assert self.invoice_id is not None
-        desired = self.in_status.currentText().strip()
-        current = self.repo.get_header(self.invoice_id).status
-
-        if desired == current:
-            return
-
-        if desired == "FINAL":
-            if current == "DRAFT":
-                new_number = self.repo.finalize(self.invoice_id)
-                # Après finalize, on reflète le numéro si auto-généré
-                if not (self.in_number.text() or "").strip():
-                    self.in_number.setText(new_number)
-            else:
-                # déjà FINAL/PAID/CANCELED -> on ne re-finalize pas
-                return
-
-        elif desired == "PAID":
-            self.repo.mark_paid(self.invoice_id)
-
-        elif desired == "CANCELED":
-            self.repo.cancel(self.invoice_id)
-
-        elif desired == "DRAFT":
-            # ton repo ne permet pas de revenir à DRAFT depuis FINAL/PAID/CANCELED
-            raise ValueError("Retour à 'DRAFT' non autorisé pour une facture déjà validée/annulée.")
-
-        else:
-            raise ValueError(f"Statut invalide: {desired}")
-
     def _save_draft(self) -> None:
         try:
             self._ensure_persisted()
@@ -295,9 +245,6 @@ class InvoiceEditorWidget(QWidget):
                 total_cents=total_cents,
                 lines=lines_payload,
             )
-
-            # 3) Statut (si l’utilisateur l’a changé)
-            self._apply_status_change_if_needed()
 
             # 4) UI
             self.backup.mark_dirty()
@@ -398,14 +345,6 @@ class InvoiceEditorWidget(QWidget):
 
     def current_tab_title(self) -> str:
         base = self.in_number.text().strip()
-        if not base:
-            base = "Facture"
-        st = self.in_status.currentText()
-        if st == "PAID":
-            return f"{base} (acquittée)"
-        if st == "CANCELED":
-            return f"{base} (annulée)"
-        return base
 
     def _emit_tab_title(self) -> None:
         self.tab_title_changed.emit(self.current_tab_title())

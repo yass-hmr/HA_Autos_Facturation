@@ -49,37 +49,16 @@ class ShareEmailDialog(QDialog):
         self.email = QLineEdit()
         self.email.setPlaceholderText("ex: client@gmail.com")
 
-        self.folder = QLineEdit()
-        self.folder.setPlaceholderText("Choisir un dossier où copier le PDF (ex: Téléchargements)")
-        self.folder.setText(default_folder)
-
-        btn_browse = QPushButton("Parcourir…")
-        btn_browse.clicked.connect(self._browse_folder)
-
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(self.folder, stretch=1)
-        folder_row.addWidget(btn_browse)
-
         layout = QFormLayout(self)
         layout.addRow("Destinataire", self.email)
-        layout.addRow("Dossier PDF", folder_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _browse_folder(self) -> None:
-        d = QFileDialog.getExistingDirectory(self, "Choisir un dossier", self.folder.text().strip() or str(Path.home()))
-        if d:
-            self.folder.setText(d)
-
     def get_email(self) -> str:
         return self.email.text().strip()
-
-    def get_folder(self) -> str:
-        return self.folder.text().strip()
-
 
 class PdfListWidget(QWidget):
     def __init__(self, repo: PdfExportRepository, *, conn: sqlite3.Connection, parent=None) -> None:

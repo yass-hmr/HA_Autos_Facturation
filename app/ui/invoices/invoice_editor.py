@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +30,11 @@ from app.db.repos.pdf_repo import PdfExportRepository
 from app.pdf.render_invoice import render_invoice_pdf
 from app.utils.paths import exports_dir
 
+def _safe_filename_part(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r'[\\/:*?"<>|]+', "-", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 @dataclass(frozen=True)
 class _LineUI:
@@ -101,17 +108,6 @@ class InvoiceEditorWidget(QWidget):
         self.table.setColumnWidth(3, 120)
         layout.addWidget(self.table, stretch=1)
 
-        # Boutons lignes
-        line_actions = QHBoxLayout()
-        btn_add = QPushButton("Ajouter ligne")
-        btn_del = QPushButton("Supprimer ligne")
-        btn_add.clicked.connect(self._add_line)
-        btn_del.clicked.connect(self._remove_selected_line)
-        line_actions.addWidget(btn_add)
-        line_actions.addWidget(btn_del)
-        line_actions.addStretch()
-        layout.addLayout(line_actions)
-
         # Totaux
         totals = QHBoxLayout()
         self.lbl_subtotal = QLabel("Sous-total (HT) : 0.00 €")
@@ -122,6 +118,17 @@ class InvoiceEditorWidget(QWidget):
         totals.addWidget(self.lbl_total)
         totals.addStretch()
         layout.addLayout(totals)
+        
+        # Boutons lignes
+        line_actions = QHBoxLayout()
+        btn_add = QPushButton("Ajouter ligne")
+        btn_del = QPushButton("Supprimer ligne")
+        btn_add.clicked.connect(self._add_line)
+        btn_del.clicked.connect(self._remove_selected_line)
+        line_actions.addWidget(btn_add)
+        line_actions.addWidget(btn_del)
+        line_actions.addStretch()
+        layout.addLayout(line_actions)
 
         # Actions
         actions = QHBoxLayout()
@@ -309,8 +316,18 @@ class InvoiceEditorWidget(QWidget):
             assert self.invoice_id is not None
 
             header = self.repo.get_header(self.invoice_id)
-            filename = f"{header.number}.pdf" if header.number else f"DRAFT-{self.invoice_id}.pdf"
-            out_path: Path = exports_dir() / filename
+            inv_number = (header.number or "").strip() or "SANS_NUMERO"
+            client_name = _safe_filename_part(header.customer_name) or "Client"
+
+            filename = f"Facture_{_safe_filename_part(inv_number)}_{client_name}.pdf"
+            out_path = exports_dir() / filename
+
+            # Écrase si existe déjà (facture mise à jour)
+            try:
+                if out_path.exists():
+                    out_path.unlink()
+            except Exception:
+                pass
 
             result = render_invoice_pdf(
                 conn=self.repo.conn,
@@ -322,11 +339,11 @@ class InvoiceEditorWidget(QWidget):
             if not pdf_path.exists():
                 raise RuntimeError(f"PDF non trouvé après génération : {pdf_path.resolve()}")
 
-            self.pdf_repo.add_or_touch(
+            # Remplacer l'export INVOICE pour cette facture (pas de doublons en base)
+            self.pdf_repo.replace_invoice_export(
                 invoice_id=self.invoice_id,
                 filename=pdf_path.name,
                 rel_path=f"exports/{pdf_path.name}",
-                kind="INVOICE",
             )
 
             self.backup.mark_dirty()
@@ -340,6 +357,7 @@ class InvoiceEditorWidget(QWidget):
             QMessageBox.information(self, "PDF", f"PDF généré :\n{pdf_path.resolve()}")
         except Exception as e:
             QMessageBox.warning(self, "PDF", str(e))
+
 
     # ---------------- Helpers ----------------
     def _append_line(self, *, qty: int, description: str, unit_price_cents: int) -> None:

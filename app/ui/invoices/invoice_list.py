@@ -92,12 +92,6 @@ class InvoiceListWidget(QWidget):
 
             # N° + statut
             number = (it.number or "(Brouillon)")
-            if it.status == "CANCELED":
-                number = f"{number} [ANNULÉE]"
-            elif it.status == "PAID":
-                number = f"{number} [ACQUITTÉE]"
-            elif it.status == "DRAFT":
-                number = f"{number} [BROUILLON]"
 
             self.table.setItem(r, 1, QTableWidgetItem(number))
 

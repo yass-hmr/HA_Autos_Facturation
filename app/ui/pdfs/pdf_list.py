@@ -238,21 +238,45 @@ class PdfListWidget(QWidget):
         self.refresh()
 
     def _share_selected(self) -> None:
-        filename = self._selected_filename()
-        invoice_id = self._selected_invoice_id()
-        if not filename or invoice_id is None:
+        row = self.table.currentRow()
+        if row < 0:
             QMessageBox.information(self, "Partager", "Sélectionnez un PDF.")
             return
 
-        internal_pdf_path = exports_dir() / filename
-        if not internal_pdf_path.exists():
-            QMessageBox.warning(self, "Partager", f"Fichier introuvable : {internal_pdf_path.resolve()}")
+        filename_item = self.table.item(row, 2)  # colonne "Fichier"
+        invoice_item = self.table.item(row, 1)   # colonne "Facture"
+        if not filename_item or not invoice_item:
+            QMessageBox.warning(self, "Partager", "Sélection invalide.")
+            return
+
+        filename = filename_item.text().strip()
+        try:
+            invoice_id = int(invoice_item.text())
+        except Exception:
+            invoice_id = 0
+
+        pdf_path = exports_dir() / filename
+        if not pdf_path.exists():
+            QMessageBox.warning(self, "Partager", f"Fichier introuvable : {pdf_path.resolve()}")
+            return
+
+        # Saisie e-mail
+        dlg = ShareEmailDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        to_email = dlg.get_email().strip()
+        if not to_email or not _EMAIL_RE.match(to_email):
+            QMessageBox.warning(self, "Partager", "Adresse e-mail invalide.")
             return
 
         # Données dynamiques
-        header = self.invoice_repo.get_header(invoice_id)
-        client_name = (header.customer_name or "").strip() or "Client"
-        inv_number = (header.number or "").strip() or Path(filename).stem
+        client_name = "Client"
+        inv_number = Path(filename).stem
+        if invoice_id:
+            header = self.invoice_repo.get_header(invoice_id)
+            client_name = (header.customer_name or "").strip() or "Client"
+            inv_number = (header.number or "").strip() or inv_number
 
         s = self.settings_repo.get()
         g_name = (s.get("garage_name") or "HA AUTOS").strip()
@@ -261,50 +285,11 @@ class PdfListWidget(QWidget):
         g_phone = (s.get("garage_phone") or "").strip()
         g_siret = (s.get("garage_siret") or "").strip()
 
-        default_folder = str(Path.home() / "Downloads")
-        dlg = ShareEmailDialog(self, default_folder=default_folder)
-        if dlg.exec() != QDialog.Accepted:
-            return
-
-        to_email = dlg.get_email()
-        if not to_email or not _EMAIL_RE.match(to_email):
-            QMessageBox.warning(self, "Partager", "Adresse e-mail invalide.")
-            return
-
-        target_folder = dlg.get_folder()
-        if not target_folder:
-            QMessageBox.warning(self, "Partager", "Veuillez choisir un dossier PDF.")
-            return
-
-        target_dir = Path(target_folder)
-        try:
-            target_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            QMessageBox.warning(self, "Partager", f"Impossible de créer le dossier : {e}")
-            return
-
-        # Nom de fichier : Facture_<NUM>_<CLIENT>.pdf
-        base_num = _safe_filename_part(inv_number)
-        base_client = _safe_filename_part(client_name)
-
-        # Si client vide -> fallback
-        if not base_client:
-            base_client = "Client"
-
-        new_filename = f"{base_num}_{base_client}.pdf"
-        target_pdf_path = target_dir / new_filename
-
-        try:
-            shutil.copy2(internal_pdf_path, target_pdf_path)
-        except Exception as e:
-            QMessageBox.warning(self, "Partager", f"Impossible de copier le PDF : {e}")
-            return
-
         subject = f"Facture n°{inv_number} – {client_name}"
         body_lines = [
             "Bonjour,",
             "",
-            f"Veuillez trouver ci-joint votre facture.",
+            f"Veuillez trouver ci-joint votre facture n°{inv_number}.",
             "",
             "N’hésitez pas à nous contacter pour toute question ou information complémentaire.",
             "",
@@ -320,15 +305,16 @@ class PdfListWidget(QWidget):
             body_lines.append(g_cp)
         if g_phone:
             body_lines.append(g_phone)
+        
 
         body = "\n".join(body_lines)
 
         mailto = f"mailto:{quote(to_email)}?subject={quote(subject)}&body={quote(body)}"
         QDesktopServices.openUrl(QUrl(mailto))
 
-        # Optionnel : ouvrir le dossier choisi pour faciliter l’attache
+        # Ouvre le dossier exports pour joindre vite
         try:
-            os.startfile(str(target_dir.resolve()))
+            os.startfile(str(exports_dir().resolve()))
         except Exception:
             pass
     
@@ -349,4 +335,3 @@ class PdfListWidget(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Imprimer", f"Impossible de lancer l’impression : {e}")
 
-    

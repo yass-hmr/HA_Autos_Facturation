@@ -11,7 +11,6 @@ class InvoiceListItem:
     id: int
     number: Optional[str]
     date: str
-    status: str
     customer_name: str
     total_cents: int
 
@@ -21,7 +20,6 @@ class InvoiceHeader:
     id: int
     number: Optional[str]
     date: str
-    status: str
     customer_name: str
     customer_address: str
     customer_postal_code: str
@@ -52,7 +50,7 @@ class InvoiceRepository:
             like = f"%{search}%"
             cur = self.conn.execute(
                 """
-                SELECT id, number, date, status, customer_name, total_cents
+                SELECT id, number, date, customer_name, total_cents
                 FROM invoice
                 WHERE number LIKE ? OR customer_name LIKE ? OR date LIKE ?
                 ORDER BY id DESC
@@ -62,7 +60,7 @@ class InvoiceRepository:
         else:
             cur = self.conn.execute(
                 """
-                SELECT id, number, date, status, customer_name, total_cents
+                SELECT id, number, date, customer_name, total_cents
                 FROM invoice
                 ORDER BY id DESC
                 """
@@ -73,7 +71,6 @@ class InvoiceRepository:
                 id=row["id"],
                 number=row["number"],
                 date=row["date"],
-                status=row["status"],
                 customer_name=row["customer_name"],
                 total_cents=row["total_cents"],
             )
@@ -84,7 +81,7 @@ class InvoiceRepository:
         now = datetime.now().isoformat(timespec="seconds")
         cur = self.conn.execute(
             """
-            INSERT INTO invoice (number, date, status, customer_name, customer_address, customer_postal_code,
+            INSERT INTO invoice (number, date, customer_name, customer_address, customer_postal_code,
                                  subtotal_cents, vat_rate, vat_cents, total_cents,
                                  created_at, updated_at)
             VALUES (NULL, ?, 'DRAFT', '', '', '', 0, 20, 0, 0, ?, ?)
@@ -97,7 +94,7 @@ class InvoiceRepository:
     def get_header(self, invoice_id: int) -> InvoiceHeader:
         cur = self.conn.execute(
             """
-            SELECT id, number, date, status, customer_name, customer_address, customer_postal_code,
+            SELECT id, number, date, customer_name, customer_address, customer_postal_code,
                    subtotal_cents, vat_rate, vat_cents, total_cents
             FROM invoice
             WHERE id = ?
@@ -111,7 +108,6 @@ class InvoiceRepository:
             id=row["id"],
             number=row["number"],
             date=row["date"],
-            status=row["status"],
             customer_name=row["customer_name"],
             customer_address=row["customer_address"],
             customer_postal_code=row["customer_postal_code"],
@@ -232,66 +228,7 @@ class InvoiceRepository:
                 (target,),
             )
 
-    def finalize(self, invoice_id: int) -> str:
-        header = self.get_header(invoice_id)
-        if header.status != "DRAFT":
-            raise ValueError("Seules les factures en brouillon peuvent être validées.")
-
-        number = (header.number or "").strip()
-        auto_generated = False
-        if not number:
-            number = self._next_number()
-            auto_generated = True
-
-        now = datetime.now().isoformat(timespec="seconds")
-        self.conn.execute(
-            """
-            UPDATE invoice
-            SET number = ?, status = 'FINAL', updated_at = ?
-            WHERE id = ?
-            """,
-            (number, now, invoice_id),
-        )
-
-        # Incrément uniquement si auto-généré, sinon on avance intelligemment
-        if auto_generated:
-            cur = self.conn.execute("SELECT value FROM counter WHERE key = 'invoice_number'")
-            n = int(cur.fetchone()["value"])
-            self.conn.execute(
-                "UPDATE counter SET value = ? WHERE key = 'invoice_number'",
-                (n + 1,),
-            )
-        else:
-            self._advance_counter_if_needed(number)
-
-        self.conn.commit()
-        return number
-
-    def mark_paid(self, invoice_id: int) -> None:
-        header = self.get_header(invoice_id)
-        if header.status not in ("FINAL", "PAID"):
-            raise ValueError("Une facture doit être validée pour être acquittée.")
-        now = datetime.now().isoformat(timespec="seconds")
-        self.conn.execute(
-            "UPDATE invoice SET status = 'PAID', updated_at = ? WHERE id = ?",
-            (now, invoice_id),
-        )
-        self.conn.commit()
-
-    def cancel(self, invoice_id: int) -> None:
-        header = self.get_header(invoice_id)
-        if header.status not in ("FINAL", "PAID"):
-            raise ValueError("Seules les factures validées peuvent être annulées.")
-        now = datetime.now().isoformat(timespec="seconds")
-        self.conn.execute(
-            "UPDATE invoice SET status = 'CANCELED', updated_at = ? WHERE id = ?",
-            (now, invoice_id),
-        )
-        self.conn.commit()
-
     def delete(self, invoice_id: int) -> None:
         header = self.get_header(invoice_id)
-        if header.status != "DRAFT":
-            raise ValueError("Suppression autorisée uniquement pour les brouillons.")
         self.conn.execute("DELETE FROM invoice WHERE id = ?", (invoice_id,))
         self.conn.commit()

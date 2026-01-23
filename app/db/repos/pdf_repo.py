@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
-
 @dataclass(frozen=True)
 class PdfExportItem:
     id: int
@@ -14,7 +13,6 @@ class PdfExportItem:
     rel_path: str
     created_at: str
     kind: str
-
 
 class PdfExportRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
@@ -83,3 +81,23 @@ class PdfExportRepository:
     def delete(self, pdf_id: int) -> None:
         self.conn.execute("DELETE FROM pdf_export WHERE id = ?", (pdf_id,))
         self.conn.commit()
+
+    def replace_invoice_export(self, *, invoice_id: int, filename: str, rel_path: str) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+
+        # Supprimer l'ancien export INVOICE de cette facture
+        self.conn.execute(
+            "DELETE FROM pdf_export WHERE invoice_id = ? AND kind = 'INVOICE'",
+            (invoice_id,),
+        )
+
+        # Insérer le nouveau
+        self.conn.execute(
+            """
+            INSERT INTO pdf_export (invoice_id, filename, rel_path, created_at, kind)
+            VALUES (?, ?, ?, ?, 'INVOICE')
+            """,
+            (invoice_id, filename, rel_path, now),
+        )
+        self.conn.commit()
+

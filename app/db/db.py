@@ -138,10 +138,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if not _has_column(conn, "settings", "garage_siret"):
         conn.execute("ALTER TABLE settings ADD COLUMN garage_siret TEXT NOT NULL DEFAULT ''")
 
-    # Migration CHECK status -> inclure PAID
-    if not _invoice_table_allows_paid(conn):
-        _migrate_invoice_add_paid(conn)
-
     # Table PDF exports + index unique (sécurité si DB existante)
     conn.execute(
         """

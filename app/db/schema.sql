@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS invoice (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   number TEXT UNIQUE,
   date TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('DRAFT', 'FINAL', 'CANCELED', 'PAID')) DEFAULT 'DRAFT',
   customer_name TEXT NOT NULL DEFAULT '',
   customer_address TEXT NOT NULL DEFAULT '',
   customer_postal_code TEXT NOT NULL DEFAULT '',

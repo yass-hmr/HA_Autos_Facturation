@@ -45,7 +45,6 @@ CREATE TABLE IF NOT EXISTS invoice (
 );
 
 CREATE INDEX IF NOT EXISTS idx_invoice_date ON invoice(date);
-CREATE INDEX IF NOT EXISTS idx_invoice_status ON invoice(status);
 
 -- =========================
 -- INVOICE LINE

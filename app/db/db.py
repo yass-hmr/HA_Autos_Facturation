@@ -64,7 +64,6 @@ def _migrate_invoice_add_paid(conn: sqlite3.Connection) -> None:
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               number TEXT UNIQUE,
               date TEXT NOT NULL,
-              status TEXT NOT NULL CHECK (status IN ('DRAFT','FINAL','CANCELED','PAID')) DEFAULT 'DRAFT',
               customer_name TEXT NOT NULL DEFAULT '',
               customer_address TEXT NOT NULL DEFAULT '',
               customer_postal_code TEXT NOT NULL DEFAULT '',
@@ -82,13 +81,13 @@ def _migrate_invoice_add_paid(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
                 INSERT INTO invoice_new (
-                  id, number, date, status,
+                  id, number, date,
                   customer_name, customer_address, customer_postal_code,
                   subtotal_cents, vat_rate, vat_cents, total_cents,
                   created_at, updated_at
                 )
                 SELECT
-                  id, number, date, status,
+                  id, number, date,
                   customer_name, customer_address, customer_postal_code,
                   subtotal_cents, vat_rate, vat_cents, total_cents,
                   created_at, updated_at
@@ -99,13 +98,13 @@ def _migrate_invoice_add_paid(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
                 INSERT INTO invoice_new (
-                  id, number, date, status,
+                  id, number, date,
                   customer_name, customer_address, customer_postal_code,
                   subtotal_cents, vat_rate, vat_cents, total_cents,
                   created_at, updated_at
                 )
                 SELECT
-                  id, number, date, status,
+                  id, number, date,
                   customer_name, customer_address, '',
                   subtotal_cents, vat_rate, vat_cents, total_cents,
                   created_at, updated_at
@@ -117,7 +116,6 @@ def _migrate_invoice_add_paid(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE invoice_new RENAME TO invoice;")
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_date ON invoice(date);")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_status ON invoice(status);")
 
         conn.execute("COMMIT;")
     except Exception:

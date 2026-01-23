@@ -56,10 +56,10 @@ def render_invoice_pdf(
 
     # Logo à gauche
     logo_path = Path(__file__).resolve().parents[1] / "assets" / "ha_autos_logo.png"
-    logo_w = 22 * mm
-    logo_h = 22 * mm
+    logo_w = 40 * mm
+    logo_h = 40 * mm
     logo_x = left + 5 * mm
-    logo_y = header_y - logo_h + 10 * mm
+    logo_y = header_y - logo_h + 23 * mm
 
     if logo_path.exists():
         try:
@@ -146,7 +146,7 @@ def render_invoice_pdf(
     # =========================
     # FACTURER À (encadré à droite, sous date)
     # =========================
-    bill_w = 45 * mm
+    bill_w = 66 * mm
     bill_h = 29 * mm
     bill_x = right - bill_w
     bill_y = meta_y - bill_h - 5 * mm
@@ -263,10 +263,6 @@ def render_invoice_pdf(
     c.drawRightString(label_x, ty, "Total (TTC)")
     c.drawRightString(value_x, ty, cents_to_euros(inv.total_cents))
     ty -= line_step
-
-    c.setFont("Helvetica", 10)
-    c.drawRightString(label_x, ty, "Solde")
-    c.drawRightString(value_x, ty, cents_to_euros(inv.total_cents))
 
     # Message
     c.setFont("Helvetica", 10)

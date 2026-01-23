@@ -308,21 +308,23 @@ class InvoiceEditorWidget(QWidget):
 
     # ---------------- Helpers ----------------
     def _append_line(self, *, qty: int, description: str, unit_price_cents: int) -> None:
-        r = self.table.rowCount()
-        self.table.insertRow(r)
+        row = self.table.rowCount()
+        self.table.insertRow(row)
 
-        self.table.setItem(r, 0, QTableWidgetItem(str(qty)))
-        self.table.setItem(r, 1, QTableWidgetItem(description))
-        self.table.setItem(r, 2, QTableWidgetItem(f"{unit_price_cents/100:.2f}"))
-        self.table.setItem(r, 3, QTableWidgetItem(f"{(qty*unit_price_cents)/100:.2f}"))
+        self.table.setItem(row, 0, QTableWidgetItem(str(qty)))
+        self.table.setItem(row, 1, QTableWidgetItem(description or ""))
+        self.table.setItem(row, 2, QTableWidgetItem(f"{unit_price_cents / 100:.2f}"))
+        self.table.setItem(row, 3, QTableWidgetItem(f"{(qty * unit_price_cents) / 100:.2f}"))
+
 
     def _add_line(self) -> None:
-        r = self.table.rowCount()
-        self.table.insertRow(r)
-        self.table.setItem(r, 0, QTableWidgetItem("1"))
-        self.table.setItem(r, 1, QTableWidgetItem(""))
-        self.table.setItem(r, 2, QTableWidgetItem("0.00"))
-        self.table.setItem(r, 3, QTableWidgetItem("0.00"))
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        self.table.setItem(row, 0, QTableWidgetItem("1"))       # Qté
+        self.table.setItem(row, 1, QTableWidgetItem(""))        # Description
+        self.table.setItem(row, 2, QTableWidgetItem("0.00"))    # Prix unitaire
+        self.table.setItem(row, 3, QTableWidgetItem("0.00"))    # Total
 
     def _remove_selected_line(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
@@ -331,20 +333,14 @@ class InvoiceEditorWidget(QWidget):
         self._refresh_totals()
 
     def _refresh_totals(self) -> None:
-        if self.invoice_id is None:
-            subtotal = vat = total = 0
-        else:
-            h = self.repo.get_header(self.invoice_id)
-            subtotal = h.subtotal_cents
-            vat = h.vat_cents
-            total = h.total_cents
-
-        self.lbl_subtotal.setText(f"Sous-total (HT) : {subtotal/100:.2f} €")
-        self.lbl_vat.setText(f"TVA (20%) : {vat/100:.2f} €")
-        self.lbl_total.setText(f"Total (TTC) : {total/100:.2f} €")
+        subtotal_cents, vat_cents, total_cents, _ = self._compute_totals_from_table()
+        self.lbl_subtotal.setText(f"Sous-total (HT) : {subtotal_cents/100:.2f} €")
+        self.lbl_vat.setText(f"TVA (20%) : {vat_cents/100:.2f} €")
+        self.lbl_total.setText(f"Total (TTC) : {total_cents/100:.2f} €")
 
     def current_tab_title(self) -> str:
         base = self.in_number.text().strip()
+        return f"Facture {base}" if base else "Facture"
 
     def _emit_tab_title(self) -> None:
         self.tab_title_changed.emit(self.current_tab_title())

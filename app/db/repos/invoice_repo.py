@@ -77,14 +77,35 @@ class InvoiceRepository:
             for row in cur.fetchall()
         ]
 
+        return [
+            InvoiceListItem(
+                id=row["id"],
+                number=row["number"],
+                date=row["date"],
+                customer_name=row["customer_name"],
+                total_cents=row["total_cents"],
+            )
+            for row in cur.fetchall()
+        ]
+
     def create_draft(self, date_iso: str) -> int:
         now = datetime.now().isoformat(timespec="seconds")
+
+        # INSERT explicite par colonnes (évite les erreurs nb valeurs/colonnes)
         cur = self.conn.execute(
             """
-            INSERT INTO invoice (number, date, customer_name, customer_address, customer_postal_code,
-                                 subtotal_cents, vat_rate, vat_cents, total_cents,
-                                 created_at, updated_at)
-            VALUES (NULL, ?, 'DRAFT', '', '', '', 0, 20, 0, 0, ?, ?)
+            INSERT INTO invoice (
+                number, date, status,
+                customer_name, customer_address, customer_postal_code,
+                subtotal_cents, vat_rate, vat_cents, total_cents,
+                created_at, updated_at
+            )
+            VALUES (
+                NULL, ?, 'DRAFT',
+                '', '', '',
+                0, 20, 0, 0,
+                ?, ?
+            )
             """,
             (date_iso, now, now),
         )

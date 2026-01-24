@@ -141,7 +141,7 @@ def render_invoice_pdf(
         y -= 5.5 * mm
     if garage_siret:
         c.setFont("Helvetica", 9)
-        c.drawString(text_x, y, {garage_siret})
+        c.drawString(text_x, y, f"{garage_siret}")
         c.setFont("Helvetica", 10)
 
     # =========================
@@ -322,10 +322,6 @@ def render_invoice_pdf(
     c.drawRightString(label_x, ty, "Total (TTC)")
     c.drawRightString(value_x, ty, cents_to_euros(getattr(inv, "total_cents", 0)))
     ty -= line_step
-
-    c.setFont("Helvetica", 10)
-    c.drawRightString(label_x, ty, "Solde")
-    c.drawRightString(value_x, ty, cents_to_euros(getattr(inv, "total_cents", 0)))
 
     # =========================
     # Message

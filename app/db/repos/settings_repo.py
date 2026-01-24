@@ -6,13 +6,35 @@ import sqlite3
 class SettingsRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        self._ensure_columns()
+
+    def _has_column(self, table: str, column: str) -> bool:
+        cur = self.conn.execute(f"PRAGMA table_info({table})")
+        return any(r[1] == column for r in cur.fetchall())  # r[1] = name
+
+    def _ensure_columns(self) -> None:
+        """
+        Rend le repo tolérant aux anciennes DB :
+        - ajoute garage_email si absent
+        """
+        if not self._has_column("settings", "garage_email"):
+            self.conn.execute(
+                "ALTER TABLE settings ADD COLUMN garage_email TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.commit()
 
     def get(self) -> dict[str, str]:
         row = self.conn.execute(
             """
             SELECT
-              garage_name, garage_address, garage_postal_code, garage_phone, garage_siret, garage_email,
-              onedrive_backup_dir, COALESCE(last_backup_at,'') AS last_backup_at
+              garage_name,
+              garage_address,
+              garage_postal_code,
+              garage_phone,
+              garage_siret,
+              garage_email,
+              onedrive_backup_dir,
+              COALESCE(last_backup_at,'') AS last_backup_at
             FROM settings
             WHERE id = 1
             """
@@ -49,7 +71,7 @@ class SettingsRepository:
             (created_at_iso,),
         )
         self.conn.commit()
-        
+
     def update(
         self,
         *,

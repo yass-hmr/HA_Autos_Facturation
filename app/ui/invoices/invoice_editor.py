@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date as _date
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -14,21 +14,55 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QFormLayout,
     QLineEdit,
-    QTextEdit,
-    QSpinBox,
+    QPushButton,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
-    QPushButton,
-    QLabel,
-    QMessageBox,
-    QComboBox,
     QHeaderView,
+    QLabel,
+    QAbstractItemView,
 )
 
 from app.db.repos.invoice_repo import InvoiceRepository
 from app.db.repos.pdf_repo import PdfExportRepository
-from app.pdf.render_invoice import render_invoice_pdf
 from app.utils.paths import exports_dir
+from app.pdf.render_invoice import render_invoice_pdf
+
+
+# =========================
+# Helpers date FR <-> ISO
+# =========================
+_DATE_FR_RE = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
+
+
+def today_fr() -> str:
+    return _date.today().strftime("%d/%m/%Y")
+
+
+def fr_to_iso(d: str) -> str:
+    d = (d or "").strip()
+    if not d:
+        return _date.today().isoformat()
+    m = _DATE_FR_RE.match(d)
+    if not m:
+        raise ValueError("Date invalide. Format attendu : jj/mm/aaaa")
+    dd, mm, yyyy = m.groups()
+    dt = datetime(int(yyyy), int(mm), int(dd))  # valide la date
+    return dt.date().isoformat()
+
+
+def iso_to_fr(d: str) -> str:
+    d = (d or "").strip()
+    if not d:
+        return today_fr()
+    if _DATE_FR_RE.match(d):
+        return d
+    try:
+        y, m, dd = d.split("-")
+        return f"{dd}/{m}/{y}"
+    except Exception:
+        return d
+
 
 def _safe_filename_part(s: str) -> str:
     s = (s or "").strip()
@@ -36,24 +70,45 @@ def _safe_filename_part(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
-@dataclass(frozen=True)
-class _LineUI:
+
+def wrap_n_chars(text: str, n: int) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if len(text) <= n:
+        return text
+    out = []
+    for i in range(0, len(text), n):
+        out.append(text[i : i + n])
+    return "\n".join(out)
+
+
+@dataclass
+class _Line:
     qty: int
+    reference: str
     description: str
-    unit_price_eur: str  # saisi en HT
+    unit_price_eur: str  # saisie utilisateur
+    total_eur: str       # affichage
 
 
 class InvoiceEditorWidget(QWidget):
-    tab_title_changed = Signal(str)
-    invoice_persisted = Signal(int)
-    closed = Signal()
+    """
+    Éditeur de facture (onglet).
+    - Date saisissable en jj/mm/aaaa, auto si vide
+    - Champs client: nom, adresse, CP, email, téléphone
+    - Lignes: Qté, Référence, Description, Prix unitaire (HT), Total
+    """
+
+    # Optionnel : si tu veux mettre à jour le titre d’onglet depuis MainWindow
+    titleChanged = Signal(str)
 
     def __init__(
         self,
         *,
         repo: InvoiceRepository,
-        backup_scheduler,
         pdf_repo: PdfExportRepository,
+        backup_scheduler,
         invoice_id: Optional[int] = None,
         parent=None,
     ) -> None:
@@ -61,201 +116,351 @@ class InvoiceEditorWidget(QWidget):
         self.repo = repo
         self.pdf_repo = pdf_repo
         self.backup = backup_scheduler
-
         self.invoice_id: Optional[int] = invoice_id
 
         self._build_ui()
-        self._load_or_init()
-        self._refresh_totals()
-        self._emit_tab_title()
+        self._load_or_create()
 
-    # ---------------- UI ----------------
+    # -------------------------
+    # UI
+    # -------------------------
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
 
-        # Entête facture
-        form = QFormLayout()
-        self.in_number = QLineEdit()
-        self.in_date = QLineEdit()
-        self.in_date.setText(date.today().isoformat())
+        # --- Header fields
+        form_row = QHBoxLayout()
+        left_form = QFormLayout()
+        right_form = QFormLayout()
 
-        self.in_customer_name = QLineEdit()
-        self.in_customer_address = QTextEdit()
-        self.in_customer_address.setFixedHeight(60)
-        self.in_customer_cp = QLineEdit()
+        self.number_edit = QLineEdit()
+        self.number_edit.setPlaceholderText("ex: 001")
+        left_form.addRow("N° de facture", self.number_edit)
 
-        form.addRow("N° de facture", self.in_number)
-        form.addRow("Date", self.in_date)
-        form.addRow("Destinataire", self.in_customer_name)
-        form.addRow("Adresse", self.in_customer_address)
-        form.addRow("Code postal", self.in_customer_cp)
+        self.date_edit = QLineEdit()
+        self.date_edit.setPlaceholderText("jj/mm/aaaa")
+        left_form.addRow("Date", self.date_edit)
 
-        layout.addLayout(form)
+        self.customer_name = QLineEdit()
+        left_form.addRow("Nom client", self.customer_name)
 
-        # Lignes
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Qté", "Description", "Prix unitaire", "Total"])
-        self.table.setEditTriggers(QTableWidget.AllEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
-        self.table.setColumnWidth(0, 70)
-        self.table.setColumnWidth(2, 120)
+        self.customer_address = QLineEdit()
+        left_form.addRow("Adresse", self.customer_address)
+
+        self.customer_postal_code = QLineEdit()
+        self.customer_postal_code.setPlaceholderText("Code postal")
+        left_form.addRow("Code postal", self.customer_postal_code)
+
+        self.customer_phone = QLineEdit()
+        self.customer_phone.setPlaceholderText("Téléphone")
+        right_form.addRow("Téléphone", self.customer_phone)
+
+        self.customer_email = QLineEdit()
+        self.customer_email.setPlaceholderText("Email")
+        right_form.addRow("E-mail", self.customer_email)
+
+        form_row.addLayout(left_form, 2)
+        form_row.addSpacing(16)
+        form_row.addLayout(right_form, 1)
+        root.addLayout(form_row)
+
+        # --- Table lines
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(
+            ["Qté", "Référence", "Description", "Prix unitaire", "Total"]
+        )
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
+
+        # Wrap + hauteur auto (pour référence/description)
+        self.table.setWordWrap(True)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
+
+        self.table.setColumnWidth(0, 60)
+        self.table.setColumnWidth(1, 120)
         self.table.setColumnWidth(3, 120)
-        layout.addWidget(self.table, stretch=1)
+        self.table.setColumnWidth(4, 120)
 
-        # Totaux
-        totals = QHBoxLayout()
-        self.lbl_subtotal = QLabel("Sous-total (HT) : 0.00 €")
-        self.lbl_vat = QLabel("TVA (20%) : 0.00 €")
-        self.lbl_total = QLabel("Total (TTC) : 0.00 €")
-        totals.addWidget(self.lbl_subtotal)
-        totals.addWidget(self.lbl_vat)
-        totals.addWidget(self.lbl_total)
-        totals.addStretch()
-        layout.addLayout(totals)
-        
-        # Boutons lignes
+        self.table.itemChanged.connect(self._recalc_from_table)
+
+        root.addWidget(self.table, 1)
+
+        # --- Actions lines
         line_actions = QHBoxLayout()
         btn_add = QPushButton("Ajouter ligne")
+        btn_add.clicked.connect(self._append_line)
         btn_del = QPushButton("Supprimer ligne")
-        btn_add.clicked.connect(self._add_line)
-        btn_del.clicked.connect(self._remove_selected_line)
+        btn_del.clicked.connect(self._delete_selected_line)
+
         line_actions.addWidget(btn_add)
         line_actions.addWidget(btn_del)
         line_actions.addStretch()
-        layout.addLayout(line_actions)
+        root.addLayout(line_actions)
 
-        # Actions
-        actions = QHBoxLayout()
+        # --- Totals
+        totals_row = QHBoxLayout()
+        self.lbl_subtotal = QLabel("Sous-total (HT) : 0.00 €")
+        self.lbl_vat = QLabel("TVA (20%) : 0.00 €")
+        self.lbl_total = QLabel("Total (TTC) : 0.00 €")
+        totals_row.addWidget(self.lbl_subtotal)
+        totals_row.addSpacing(18)
+        totals_row.addWidget(self.lbl_vat)
+        totals_row.addSpacing(18)
+        totals_row.addWidget(self.lbl_total)
+        totals_row.addStretch()
+        root.addLayout(totals_row)
+
+        # --- Bottom actions
+        bottom = QHBoxLayout()
         self.btn_save = QPushButton("Enregistrer")
-        self.btn_export = QPushButton("Exporter PDF")
-        self.btn_close = QPushButton("Fermer")
-
         self.btn_save.clicked.connect(self._save_draft)
+
+        self.btn_export = QPushButton("Exporter PDF")
         self.btn_export.clicked.connect(self._export_pdf)
-        self.btn_close.clicked.connect(self._on_close)
 
-        actions.addWidget(self.btn_save)
-        actions.addWidget(self.btn_export)
-        actions.addStretch()
-        actions.addWidget(self.btn_close)
-        layout.addLayout(actions)
+        bottom.addWidget(self.btn_save)
+        bottom.addWidget(self.btn_export)
+        bottom.addStretch()
+        root.addLayout(bottom)
 
-        self.table.itemChanged.connect(lambda *_: self._refresh_totals())
-        self.in_number.textChanged.connect(lambda *_: self._emit_tab_title())
-
-    # ---------------- Data load/save ----------------
-    def _load_or_init(self) -> None:
+    # -------------------------
+    # Load / create
+    # -------------------------
+    def _load_or_create(self) -> None:
         if self.invoice_id is None:
-            # Nouveau brouillon en mémoire; persisté au premier Enregistrer/Exporter
-            return
-        h = self.repo.get_header(self.invoice_id)
-        self.in_number.setText(h.number or "")
-        self.in_date.setText(h.date or "")
-        self.in_customer_name.setText(h.customer_name or "")
-        self.in_customer_address.setPlainText(h.customer_address or "")
-        self.in_customer_cp.setText(h.customer_postal_code or "")
+            # crée une facture vide avec date du jour ISO
+            new_id = self.repo.create_draft(_date.today().isoformat())
+            self.invoice_id = new_id
 
+        self._load_invoice()
+        self._emit_title()
+
+    def _load_invoice(self) -> None:
+        assert self.invoice_id is not None
+        h = self.repo.get_header(self.invoice_id)
+
+        self.number_edit.setText((h.number or "").strip())
+        self.date_edit.setText(iso_to_fr(h.date))
+
+        self.customer_name.setText(h.customer_name or "")
+        self.customer_address.setText(h.customer_address or "")
+        self.customer_postal_code.setText(h.customer_postal_code or "")
+        self.customer_email.setText(getattr(h, "customer_email", "") or "")
+        self.customer_phone.setText(getattr(h, "customer_phone", "") or "")
+
+        self.table.blockSignals(True)
         self.table.setRowCount(0)
         for ln in self.repo.get_lines(self.invoice_id):
-            self._append_line(qty=ln.qty, description=ln.description, unit_price_cents=ln.unit_price_cents)
+            self._insert_line_row(
+                qty=str(ln.qty),
+                reference=getattr(ln, "reference", "") or "",
+                description=ln.description or "",
+                unit_price=f"{ln.unit_price_cents/100:.2f}",
+                total=f"{ln.line_total_cents/100:.2f}",
+            )
+        self.table.blockSignals(False)
 
-    def _ensure_persisted(self) -> None:
-        if self.invoice_id is not None:
+        self._recalc_totals()
+        self.table.resizeRowsToContents()
+
+    # -------------------------
+    # Table helpers
+    # -------------------------
+    def _insert_line_row(
+        self,
+        *,
+        qty: str,
+        reference: str,
+        description: str,
+        unit_price: str,
+        total: str,
+    ) -> None:
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+
+        it_qty = QTableWidgetItem(qty)
+        it_ref = QTableWidgetItem(wrap_n_chars(reference, 18))
+        it_desc = QTableWidgetItem(wrap_n_chars(description, 40))
+        it_unit = QTableWidgetItem(unit_price)
+        it_total = QTableWidgetItem(total)
+
+        # Tooltips = valeur brute
+        it_ref.setToolTip(reference)
+        it_desc.setToolTip(description)
+
+        # Align
+        it_qty.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        it_unit.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        it_total.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        # Total non éditable
+        it_total.setFlags(it_total.flags() & ~Qt.ItemIsEditable)
+
+        self.table.setItem(r, 0, it_qty)
+        self.table.setItem(r, 1, it_ref)
+        self.table.setItem(r, 2, it_desc)
+        self.table.setItem(r, 3, it_unit)
+        self.table.setItem(r, 4, it_total)
+
+    def _append_line(self) -> None:
+        self.table.blockSignals(True)
+        self._insert_line_row(qty="1", reference="", description="", unit_price="0.00", total="0.00")
+        self.table.blockSignals(False)
+        self.table.resizeRowsToContents()
+
+    def _delete_selected_line(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
             return
+        self.table.blockSignals(True)
+        self.table.removeRow(row)
+        self.table.blockSignals(False)
+        self._recalc_totals()
 
-        date_iso = (self.in_date.text().strip() or date.today().isoformat())
-        self.invoice_id = self.repo.create_draft(date_iso)
+    # -------------------------
+    # Recalc
+    # -------------------------
+    def _recalc_from_table(self) -> None:
+        # recalcul ligne modifiée + totaux
+        self._recalc_totals()
 
-        self.invoice_persisted.emit(self.invoice_id)
-        self.backup.mark_dirty()
+    @staticmethod
+    def _parse_qty(s: str) -> int:
+        s = (s or "").strip()
+        if not s:
+            return 0
+        try:
+            return max(0, int(s))
+        except Exception:
+            return 0
 
-    def _collect_lines(self) -> list[_LineUI]:
-        out: list[_LineUI] = []
-        for r in range(self.table.rowCount()):
-            qty_item = self.table.item(r, 0)
-            desc_item = self.table.item(r, 1)
-            unit_item = self.table.item(r, 2)
-
-            qty = int(qty_item.text()) if qty_item and qty_item.text().strip().isdigit() else 0
-            desc = (desc_item.text() if desc_item else "").strip()
-            unit = (unit_item.text() if unit_item else "").strip()
-            out.append(_LineUI(qty=qty, description=desc, unit_price_eur=unit))
-        return out
-
-    def _eur_to_cents(self, s: str) -> int:
-        s = (s or "").replace("€", "").strip().replace(",", ".")
+    @staticmethod
+    def _parse_eur_to_cents(s: str) -> int:
+        s = (s or "").strip().replace(",", ".")
         if not s:
             return 0
         try:
             v = float(s)
-        except ValueError:
+        except Exception:
             return 0
+        # pas d'arrondi “comptable” : on convertit au centime
         return int(round(v * 100))
-    
-    def _compute_totals_from_table(self) -> tuple[int, int, int, list[tuple[int, str, int, int]]]:
-        """
-        Retourne: (subtotal_cents, vat_cents, total_cents, lines_payload)
-        lines_payload: List[(qty, desc, unit_price_cents, line_total_cents)]
-        """
-        vat_rate = 20
-        lines_payload: list[tuple[int, str, int, int]] = []
+
+    def _recalc_totals(self) -> None:
         subtotal_cents = 0
 
+        self.table.blockSignals(True)
         for r in range(self.table.rowCount()):
-            qty_item = self.table.item(r, 0)
-            desc_item = self.table.item(r, 1)
-            unit_item = self.table.item(r, 2)
-
-            qty = int(qty_item.text()) if qty_item and qty_item.text().strip().isdigit() else 0
-            desc = (desc_item.text() if desc_item else "").strip()
-            unit_cents = self._eur_to_cents(unit_item.text() if unit_item else "")
-
-            line_total_cents = qty * unit_cents
+            qty = self._parse_qty(self._item_text(r, 0))
+            up_cents = self._parse_eur_to_cents(self._item_text(r, 3))
+            line_total_cents = qty * up_cents
             subtotal_cents += line_total_cents
-            lines_payload.append((qty, desc, unit_cents, line_total_cents))
 
-        vat_cents = (subtotal_cents * vat_rate) // 100  # 20% => exact en cents
+            it_total = self.table.item(r, 4)
+            if it_total is None:
+                it_total = QTableWidgetItem()
+                it_total.setFlags(it_total.flags() & ~Qt.ItemIsEditable)
+                it_total.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.table.setItem(r, 4, it_total)
+            it_total.setText(f"{line_total_cents/100:.2f}")
+        self.table.blockSignals(False)
+
+        vat_rate = 20
+        vat_cents = (subtotal_cents * vat_rate) // 100
         total_cents = subtotal_cents + vat_cents
-        return subtotal_cents, vat_cents, total_cents, lines_payload
+
+        self.lbl_subtotal.setText(f"Sous-total (HT) : {subtotal_cents/100:.2f} €")
+        self.lbl_vat.setText(f"TVA (20%) : {vat_cents/100:.2f} €")
+        self.lbl_total.setText(f"Total (TTC) : {total_cents/100:.2f} €")
+
+        self.table.resizeRowsToContents()
+
+    def _item_text(self, row: int, col: int) -> str:
+        it = self.table.item(row, col)
+        return (it.text() if it else "").strip()
+
+    # -------------------------
+    # Save
+    # -------------------------
+    def _ensure_persisted(self) -> None:
+        if self.invoice_id is None:
+            self.invoice_id = self.repo.create_draft(_date.today().isoformat())
+
+    def _collect_lines_for_save(self) -> List[Tuple[int, str, str, int, int]]:
+        """
+        Retourne une liste de lignes pour repo.save_invoice, format:
+        (qty, reference, description, unit_price_cents, line_total_cents)
+        """
+        out: List[Tuple[int, str, str, int, int]] = []
+        for r in range(self.table.rowCount()):
+            qty = self._parse_qty(self._item_text(r, 0))
+
+            # On reprend la valeur brute via tooltip si possible (sinon text)
+            ref_item = self.table.item(r, 1)
+            desc_item = self.table.item(r, 2)
+            reference = (ref_item.toolTip() if ref_item and ref_item.toolTip() else self._item_text(r, 1)).strip()
+            description = (desc_item.toolTip() if desc_item and desc_item.toolTip() else self._item_text(r, 2)).strip()
+
+            up_cents = self._parse_eur_to_cents(self._item_text(r, 3))
+            lt_cents = qty * up_cents
+            # On garde même les lignes vides si qty=0 ? -> ici on ignore les lignes totalement vides
+            if qty == 0 and not reference and not description and up_cents == 0:
+                continue
+            out.append((qty, reference, description, up_cents, lt_cents))
+        return out
+
     def _save_draft(self) -> None:
         try:
             self._ensure_persisted()
             assert self.invoice_id is not None
 
-            # 1) Calcul totaux depuis le tableau (PU saisi en HT)
-            subtotal_cents, vat_cents, total_cents, lines_payload = self._compute_totals_from_table()
+            # Date FR -> ISO ; si vide, on auto-remplit
+            if not self.date_edit.text().strip():
+                self.date_edit.setText(today_fr())
+            date_iso = fr_to_iso(self.date_edit.text())
 
-            # 2) Sauvegarde en base (en-tête + lignes)
-            number = (self.in_number.text() or "").strip() or None
-            date_iso = (self.in_date.text().strip() or date.today().isoformat())
+            lines = self._collect_lines_for_save()
+
+            # Calcul totaux cohérents avec table
+            subtotal_cents = 0
+            for qty, _ref, _desc, up_cents, lt_cents in lines:
+                subtotal_cents += lt_cents
+
+            vat_rate = 20
+            vat_cents = (subtotal_cents * vat_rate) // 100
+            total_cents = subtotal_cents + vat_cents
 
             self.repo.save_invoice(
                 self.invoice_id,
-                number=number,
+                number=self.number_edit.text(),
                 date_iso=date_iso,
-                customer_name=(self.in_customer_name.text() or "").strip(),
-                customer_address=(self.in_customer_address.toPlainText() or "").strip(),
-                customer_postal_code=(self.in_customer_cp.text() or "").strip(),
+                customer_name=self.customer_name.text(),
+                customer_address=self.customer_address.text(),
+                customer_postal_code=self.customer_postal_code.text(),
+                customer_email=self.customer_email.text(),
+                customer_phone=self.customer_phone.text(),
                 subtotal_cents=subtotal_cents,
-                vat_rate=20,
+                vat_rate=vat_rate,
                 vat_cents=vat_cents,
                 total_cents=total_cents,
-                lines=lines_payload,
+                lines=lines,  # type: ignore[arg-type]
             )
 
-            # 4) UI
             self.backup.mark_dirty()
-            self._refresh_totals()
-            self._emit_tab_title()
-
-            QMessageBox.information(self, "Facture", "Enregistrée.")
+            self._emit_title()
         except Exception as e:
-            QMessageBox.warning(self, "Facture", str(e))
+            QMessageBox.warning(self, "Enregistrer", str(e))
 
-    # ---------------- PDF ----------------
+    # -------------------------
+    # PDF
+    # -------------------------
     def _export_pdf(self) -> None:
         try:
             self._ensure_persisted()
@@ -269,7 +474,7 @@ class InvoiceEditorWidget(QWidget):
             filename = f"Facture_{_safe_filename_part(inv_number)}_{client_name}.pdf"
             out_path = exports_dir() / filename
 
-            # Écrase si existe déjà (facture mise à jour)
+            # Écrase si déjà existant
             try:
                 if out_path.exists():
                     out_path.unlink()
@@ -286,7 +491,6 @@ class InvoiceEditorWidget(QWidget):
             if not pdf_path.exists():
                 raise RuntimeError(f"PDF non trouvé après génération : {pdf_path.resolve()}")
 
-            # Remplacer l'export INVOICE pour cette facture (pas de doublons en base)
             self.pdf_repo.replace_invoice_export(
                 invoice_id=self.invoice_id,
                 filename=pdf_path.name,
@@ -295,6 +499,7 @@ class InvoiceEditorWidget(QWidget):
 
             self.backup.mark_dirty()
 
+            # Ouvrir le dossier exports
             try:
                 import os
                 os.startfile(str(pdf_path.parent.resolve()))
@@ -305,45 +510,11 @@ class InvoiceEditorWidget(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "PDF", str(e))
 
-
-    # ---------------- Helpers ----------------
-    def _append_line(self, *, qty: int, description: str, unit_price_cents: int) -> None:
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-
-        self.table.setItem(row, 0, QTableWidgetItem(str(qty)))
-        self.table.setItem(row, 1, QTableWidgetItem(description or ""))
-        self.table.setItem(row, 2, QTableWidgetItem(f"{unit_price_cents / 100:.2f}"))
-        self.table.setItem(row, 3, QTableWidgetItem(f"{(qty * unit_price_cents) / 100:.2f}"))
-
-
-    def _add_line(self) -> None:
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-
-        self.table.setItem(row, 0, QTableWidgetItem("1"))       # Qté
-        self.table.setItem(row, 1, QTableWidgetItem(""))        # Description
-        self.table.setItem(row, 2, QTableWidgetItem("0.00"))    # Prix unitaire
-        self.table.setItem(row, 3, QTableWidgetItem("0.00"))    # Total
-
-    def _remove_selected_line(self) -> None:
-        rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
-        for r in rows:
-            self.table.removeRow(r)
-        self._refresh_totals()
-
-    def _refresh_totals(self) -> None:
-        subtotal_cents, vat_cents, total_cents, _ = self._compute_totals_from_table()
-        self.lbl_subtotal.setText(f"Sous-total (HT) : {subtotal_cents/100:.2f} €")
-        self.lbl_vat.setText(f"TVA (20%) : {vat_cents/100:.2f} €")
-        self.lbl_total.setText(f"Total (TTC) : {total_cents/100:.2f} €")
-
-    def current_tab_title(self) -> str:
-        base = self.in_number.text().strip()
-        return f"Facture {base}" if base else "Facture"
-
-    def _emit_tab_title(self) -> None:
-        self.tab_title_changed.emit(self.current_tab_title())
-
-    def _on_close(self) -> None:
-        self.closed.emit()
+    # -------------------------
+    # Tab title
+    # -------------------------
+    def _emit_title(self) -> None:
+        # Onglet = "Facture" par défaut, puis "Facture - <num>" si dispo
+        num = (self.number_edit.text() or "").strip()
+        title = "Facture" if not num else f"Facture - {num}"
+        self.titleChanged.emit(title)

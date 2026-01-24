@@ -23,6 +23,8 @@ class InvoiceHeader:
     customer_name: str
     customer_address: str
     customer_postal_code: str
+    customer_email: str
+    customer_phone: str
     subtotal_cents: int
     vat_rate: int
     vat_cents: int
@@ -34,6 +36,7 @@ class InvoiceLine:
     id: int
     invoice_id: int
     position: int
+    reference: str
     qty: int
     description: str
     unit_price_cents: int
@@ -77,32 +80,21 @@ class InvoiceRepository:
             for row in cur.fetchall()
         ]
 
-        return [
-            InvoiceListItem(
-                id=row["id"],
-                number=row["number"],
-                date=row["date"],
-                customer_name=row["customer_name"],
-                total_cents=row["total_cents"],
-            )
-            for row in cur.fetchall()
-        ]
-
     def create_draft(self, date_iso: str) -> int:
         now = datetime.now().isoformat(timespec="seconds")
-
-        # INSERT explicite par colonnes (évite les erreurs nb valeurs/colonnes)
         cur = self.conn.execute(
             """
             INSERT INTO invoice (
-                number, date, status,
+                number, date,
                 customer_name, customer_address, customer_postal_code,
+                customer_email, customer_phone,
                 subtotal_cents, vat_rate, vat_cents, total_cents,
                 created_at, updated_at
             )
             VALUES (
                 NULL, ?, 'DRAFT',
                 '', '', '',
+                '', '',
                 0, 20, 0, 0,
                 ?, ?
             )
@@ -115,8 +107,11 @@ class InvoiceRepository:
     def get_header(self, invoice_id: int) -> InvoiceHeader:
         cur = self.conn.execute(
             """
-            SELECT id, number, date, customer_name, customer_address, customer_postal_code,
-                   subtotal_cents, vat_rate, vat_cents, total_cents
+            SELECT
+                id, number, date,
+                customer_name, customer_address, customer_postal_code,
+                customer_email, customer_phone,
+                subtotal_cents, vat_rate, vat_cents, total_cents
             FROM invoice
             WHERE id = ?
             """,
@@ -132,6 +127,8 @@ class InvoiceRepository:
             customer_name=row["customer_name"],
             customer_address=row["customer_address"],
             customer_postal_code=row["customer_postal_code"],
+            customer_email=row["customer_email"],
+            customer_phone=row["customer_phone"],
             subtotal_cents=row["subtotal_cents"],
             vat_rate=row["vat_rate"],
             vat_cents=row["vat_cents"],
@@ -141,7 +138,7 @@ class InvoiceRepository:
     def get_lines(self, invoice_id: int) -> List[InvoiceLine]:
         cur = self.conn.execute(
             """
-            SELECT id, invoice_id, position, qty, description,
+            SELECT id, invoice_id, position, reference, qty, description,
                    unit_price_cents, line_total_cents
             FROM invoice_line
             WHERE invoice_id = ?
@@ -154,6 +151,7 @@ class InvoiceRepository:
                 id=row["id"],
                 invoice_id=row["invoice_id"],
                 position=row["position"],
+                reference=row["reference"],
                 qty=row["qty"],
                 description=row["description"],
                 unit_price_cents=row["unit_price_cents"],
@@ -171,13 +169,16 @@ class InvoiceRepository:
         customer_name: str,
         customer_address: str,
         customer_postal_code: str,
+        customer_email: str,
+        customer_phone: str,
         subtotal_cents: int,
         vat_rate: int,
         vat_cents: int,
         total_cents: int,
-        lines: List[Tuple[int, str, int, int]],
+        lines: List[Tuple[int, str, str, int, int]],
     ) -> None:
         now = datetime.now().isoformat(timespec="seconds")
+
         number = (number or "").strip()
         number_db = number if number else None
 
@@ -189,6 +190,8 @@ class InvoiceRepository:
                 customer_name = ?,
                 customer_address = ?,
                 customer_postal_code = ?,
+                customer_email = ?,
+                customer_phone = ?,
                 subtotal_cents = ?,
                 vat_rate = ?,
                 vat_cents = ?,
@@ -202,6 +205,8 @@ class InvoiceRepository:
                 customer_name.strip(),
                 customer_address.strip(),
                 customer_postal_code.strip(),
+                customer_email.strip(),
+                customer_phone.strip(),
                 int(subtotal_cents),
                 int(vat_rate),
                 int(vat_cents),
@@ -211,15 +216,28 @@ class InvoiceRepository:
             ),
         )
 
+        # Remplacer toutes les lignes (simple et fiable)
         self.conn.execute("DELETE FROM invoice_line WHERE invoice_id = ?", (invoice_id,))
-        for idx, (qty, desc, up_cents, lt_cents) in enumerate(lines, start=1):
+
+        for idx, (qty, reference, desc, up_cents, lt_cents) in enumerate(lines, start=1):
             self.conn.execute(
                 """
-                INSERT INTO invoice_line (invoice_id, position, qty, description, unit_price_cents, line_total_cents)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO invoice_line (
+                    invoice_id, position, qty, reference, description, unit_price_cents, line_total_cents
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (invoice_id, idx, int(qty), desc.strip(), int(up_cents), int(lt_cents)),
+                (
+                    int(invoice_id),
+                    int(idx),
+                    int(qty),
+                    (reference or "").strip(),
+                    (desc or "").strip(),
+                    int(up_cents),
+                    int(lt_cents),
+                ),
             )
+
         self.conn.commit()
 
     def _next_number(self) -> str:
@@ -231,7 +249,6 @@ class InvoiceRepository:
         return f"{n:03d}"
 
     def _advance_counter_if_needed(self, used_number: str) -> None:
-        # Si l'utilisateur force un numéro numérique, on avance le compteur pour éviter collisions
         try:
             used = int(used_number)
         except Exception:
@@ -249,7 +266,25 @@ class InvoiceRepository:
                 (target,),
             )
 
-    def delete(self, invoice_id: int) -> None:
+    def finalize(self, invoice_id: int) -> str:
         header = self.get_header(invoice_id)
+
+        number = (header.number or "").strip()
+        auto_generated = False
+
+        if auto_generated:
+            cur = self.conn.execute("SELECT value FROM counter WHERE key = 'invoice_number'")
+            n = int(cur.fetchone()["value"])
+            self.conn.execute(
+                "UPDATE counter SET value = ? WHERE key = 'invoice_number'",
+                (n + 1,),
+            )
+        else:
+            self._advance_counter_if_needed(number)
+
+        self.conn.commit()
+        return number
+
+    def delete(self, invoice_id: int) -> None:
         self.conn.execute("DELETE FROM invoice WHERE id = ?", (invoice_id,))
         self.conn.commit()

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS settings (
   garage_postal_code TEXT NOT NULL DEFAULT '',
   garage_phone TEXT NOT NULL DEFAULT '',
   garage_siret TEXT NOT NULL DEFAULT '',
+  garage_email TEXT NOT NULL DEFAULT '',
   onedrive_backup_dir TEXT NOT NULL DEFAULT '',
   last_backup_at TEXT DEFAULT NULL
 );
@@ -36,6 +37,8 @@ CREATE TABLE IF NOT EXISTS invoice (
   customer_name TEXT NOT NULL DEFAULT '',
   customer_address TEXT NOT NULL DEFAULT '',
   customer_postal_code TEXT NOT NULL DEFAULT '',
+  customer_email TEXT NOT NULL DEFAULT '',
+  customer_phone TEXT NOT NULL DEFAULT '',
   subtotal_cents INTEGER NOT NULL DEFAULT 0,
   vat_rate INTEGER NOT NULL DEFAULT 20,
   vat_cents INTEGER NOT NULL DEFAULT 0,
@@ -53,6 +56,7 @@ CREATE TABLE IF NOT EXISTS invoice_line (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id INTEGER NOT NULL,
   position INTEGER NOT NULL,
+  reference TEXT NOT NULL DEFAULT '',
   qty INTEGER NOT NULL CHECK (qty >= 0),
   description TEXT NOT NULL DEFAULT '',
   unit_price_cents INTEGER NOT NULL DEFAULT 0 CHECK (unit_price_cents >= 0),

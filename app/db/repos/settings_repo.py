@@ -11,7 +11,7 @@ class SettingsRepository:
         row = self.conn.execute(
             """
             SELECT
-              garage_name, garage_address, garage_postal_code, garage_phone, garage_siret,
+              garage_name, garage_address, garage_postal_code, garage_phone, garage_siret, garage_email,
               onedrive_backup_dir, COALESCE(last_backup_at,'') AS last_backup_at
             FROM settings
             WHERE id = 1
@@ -27,6 +27,7 @@ class SettingsRepository:
                 "garage_postal_code": "",
                 "garage_phone": "",
                 "garage_siret": "",
+                "garage_email": "",
                 "onedrive_backup_dir": "",
                 "last_backup_at": "",
             }
@@ -37,6 +38,7 @@ class SettingsRepository:
             "garage_postal_code": row["garage_postal_code"] or "",
             "garage_phone": row["garage_phone"] or "",
             "garage_siret": row["garage_siret"] or "",
+            "garage_email": row["garage_email"] or "",
             "onedrive_backup_dir": row["onedrive_backup_dir"] or "",
             "last_backup_at": row["last_backup_at"] or "",
         }
@@ -55,6 +57,7 @@ class SettingsRepository:
         garage_address: str,
         garage_postal_code: str,
         garage_phone: str,
+        garage_email: str,
         garage_siret: str,
         onedrive_backup_dir: str,
     ) -> None:
@@ -65,6 +68,7 @@ class SettingsRepository:
                 garage_address = ?,
                 garage_postal_code = ?,
                 garage_phone = ?,
+                garage_email = ?,
                 garage_siret = ?,
                 onedrive_backup_dir = ?
             WHERE id = 1
@@ -74,6 +78,7 @@ class SettingsRepository:
                 (garage_address or "").strip(),
                 (garage_postal_code or "").strip(),
                 (garage_phone or "").strip(),
+                (garage_email or "").strip(),
                 (garage_siret or "").strip(),
                 (onedrive_backup_dir or "").strip(),
             ),

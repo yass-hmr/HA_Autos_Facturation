@@ -12,6 +12,7 @@ from reportlab.pdfgen import canvas
 from app.db.repos.invoice_repo import InvoiceRepository
 from app.db.repos.settings_repo import SettingsRepository
 from app.domain.money import cents_to_euros
+from app.ui.invoices.invoice_editor import iso_to_fr
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,11 @@ def render_invoice_pdf(
     if garage_phone:
         y -= 5.2 * mm
         c.drawString(text_x, y, garage_phone)
+    
+    garage_email = (s.get("garage_email") or "").strip()
+    if garage_email:
+        y -= 5.5 * mm
+        c.drawString(text_x, y, garage_email)
 
     # =========================
     # DATE + N° (ENCADRÉ)
@@ -137,7 +143,7 @@ def render_invoice_pdf(
 
     c.rect(meta_x, meta_y, meta_w, meta_h, stroke=1, fill=0)
 
-    inv_date = (getattr(inv, "date", "") or "").replace("-", "/")
+    inv_date = iso_to_fr(getattr(inv, "date", "") or "")
     c.setFont("Helvetica", 10)
     c.drawString(meta_x + 4 * mm, meta_y + meta_h - 7 * mm, f"Date : {inv_date}")
     if getattr(inv, "number", ""):
@@ -147,7 +153,7 @@ def render_invoice_pdf(
     # FACTURER À (encadré à droite, sous date)
     # =========================
     bill_w = 66 * mm
-    bill_h = 29 * mm
+    bill_h = 40 * mm
     bill_x = right - bill_w
     bill_y = meta_y - bill_h - 5 * mm
 
@@ -167,6 +173,17 @@ def render_invoice_pdf(
     cp_c = (getattr(inv, "customer_postal_code", "") or "").strip()
     if cp_c:
         c.drawString(bill_x + 4 * mm, y_b, cp_c)
+        
+    email = (getattr(inv, "customer_email", "") or "").strip()
+    phone = (getattr(inv, "customer_phone", "") or "").strip()
+
+    if phone:
+        y_b -= 6 * mm
+        c.drawString(bill_x + 4 * mm, y_b, {phone})
+
+    if email:
+        y_b -= 6 * mm
+        c.drawString(bill_x + 4 * mm, y_b, {email})
 
     # =========================
     # TABLEAU

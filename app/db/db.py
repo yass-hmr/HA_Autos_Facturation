@@ -127,14 +127,26 @@ def _migrate_invoice_add_paid(conn: sqlite3.Connection) -> None:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     # Colonnes manquantes (DB ancienne)
-    if not _has_column(conn, "invoice", "customer_postal_code"):
-        conn.execute("ALTER TABLE invoice ADD COLUMN customer_postal_code TEXT NOT NULL DEFAULT ''")
-
     if not _has_column(conn, "settings", "garage_postal_code"):
         conn.execute("ALTER TABLE settings ADD COLUMN garage_postal_code TEXT NOT NULL DEFAULT ''")
-
+        
     if not _has_column(conn, "settings", "garage_siret"):
         conn.execute("ALTER TABLE settings ADD COLUMN garage_siret TEXT NOT NULL DEFAULT ''")
+        
+    if not _has_column(conn, "settings", "garage_email"):
+        conn.execute("ALTER TABLE settings ADD COLUMN garage_email TEXT NOT NULL DEFAULT ''")
+        
+    if not _has_column(conn, "invoice", "customer_postal_code"):
+        conn.execute("ALTER TABLE invoice ADD COLUMN customer_postal_code TEXT NOT NULL DEFAULT ''")
+        
+    if not _has_column(conn, "invoice", "customer_email"):
+        conn.execute("ALTER TABLE invoice ADD COLUMN customer_email TEXT NOT NULL DEFAULT ''")
+
+    if not _has_column(conn, "invoice", "customer_phone"):
+        conn.execute("ALTER TABLE invoice ADD COLUMN customer_phone TEXT NOT NULL DEFAULT ''")
+        
+    if not _has_column(conn, "invoice_line", "reference"):
+        conn.execute("ALTER TABLE invoice_line ADD COLUMN reference TEXT NOT NULL DEFAULT ''")
 
     # Table PDF exports + index unique (sécurité si DB existante)
     conn.execute(

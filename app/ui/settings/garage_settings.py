@@ -42,6 +42,8 @@ class GarageSettingsWidget(QWidget):
         self.garage_postal = QLineEdit()
         self.garage_postal.setPlaceholderText("Code postal")
         self.garage_phone = QLineEdit()
+        self.garage_email = QLineEdit()
+        self.garage_siret = QLineEdit()
 
         self.onedrive_dir = QLineEdit()
         self.onedrive_dir.setReadOnly(True)
@@ -60,6 +62,8 @@ class GarageSettingsWidget(QWidget):
         form.addRow("Adresse", self.garage_address)
         form.addRow("Code postal", self.garage_postal)
         form.addRow("Téléphone", self.garage_phone)
+        form.addRow("Email", self.garage_email)
+        form.addRow("SIRET", self.garage_siret)
         form.addRow("Dossier OneDrive", onedrive_layout)
 
         layout.addLayout(form)
@@ -86,6 +90,8 @@ class GarageSettingsWidget(QWidget):
         self.garage_address.setPlainText(data.get("garage_address", ""))
         self.garage_postal.setText(data.get("garage_postal_code", ""))
         self.garage_phone.setText(data.get("garage_phone", ""))
+        self.garage_email.setText(data.get("garage_email", ""))
+        self.garage_siret.setText(data.get("garage_siret", ""))
         self.onedrive_dir.setText(data.get("onedrive_backup_dir", ""))
 
         last_backup = data.get("last_backup_at")
@@ -116,6 +122,8 @@ class GarageSettingsWidget(QWidget):
             garage_address=self.garage_address.toPlainText(),
             garage_postal_code=self.garage_postal.text(),
             garage_phone=self.garage_phone.text(),
+            garage_email=self.garage_email.text(),
+            garage_siret=self.garage_siret.text(),
             onedrive_backup_dir=self.onedrive_dir.text(),
         )
 

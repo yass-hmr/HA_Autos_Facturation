@@ -12,8 +12,16 @@ from reportlab.pdfgen import canvas
 from app.db.repos.invoice_repo import InvoiceRepository
 from app.db.repos.settings_repo import SettingsRepository
 from app.domain.money import cents_to_euros
-from app.ui.invoices.invoice_editor import iso_to_fr
+from app.utils.dates import iso_to_fr
 
+def _as_text(v) -> str:
+    if v is None:
+        return ""
+    # Erreur fréquente : set au lieu de str
+    if isinstance(v, set):
+        # on convertit en chaîne lisible
+        return " ".join(str(x) for x in v)
+    return str(v)
 
 @dataclass(frozen=True)
 class PdfResult:
@@ -93,12 +101,12 @@ def render_invoice_pdf(
     garage_top = (header_y - 25 * mm)
     text_x = left + logo_w - 15 * mm
 
-    garage_name = (s.get("garage_name") or "").strip()
-    garage_siret = (s.get("garage_siret") or "").strip()
-    garage_addr = (s.get("garage_address") or "").strip()
-    garage_cp = (s.get("garage_postal_code") or "").strip()
-    garage_phone = (s.get("garage_phone") or "").strip()
-
+    garage_name = _as_text((s.get("garage_name") or "")).strip()
+    garage_siret = _as_text((s.get("garage_siret") or "")).strip()
+    garage_addr = _as_text((s.get("garage_address") or "")).strip()
+    garage_cp = _as_text((s.get("garage_postal_code") or "")).strip()
+    garage_phone = _as_text((s.get("garage_phone") or "")).strip()
+    garage_email = _as_text((s.get("garage_email") or "")).strip()
     # Fallback si rien n'est renseigné en paramètres
     if not any([garage_name, garage_addr, garage_cp, garage_phone, garage_siret]):
         garage_name = "(Paramètres garage non renseignés)"
@@ -145,9 +153,9 @@ def render_invoice_pdf(
 
     inv_date = iso_to_fr(getattr(inv, "date", "") or "")
     c.setFont("Helvetica", 10)
-    c.drawString(meta_x + 4 * mm, meta_y + meta_h - 7 * mm, f"Date : {inv_date}")
+    c.drawString(meta_x + 4 * mm, meta_y + meta_h - 7 * mm, _as_text(f"Date : {inv_date}"))
     if getattr(inv, "number", ""):
-        c.drawString(meta_x + 4 * mm, meta_y + meta_h - 13 * mm, f"N° : {inv.number}")
+        c.drawString(meta_x + 4 * mm, meta_y + meta_h - 13 * mm, _as_text(f"N° : {inv.number}"))
 
     # =========================
     # FACTURER À (encadré à droite, sous date)
@@ -165,17 +173,17 @@ def render_invoice_pdf(
     c.setFont("Helvetica", 10)
     y_b = bill_y + bill_h - 13 * mm
     if getattr(inv, "customer_name", ""):
-        c.drawString(bill_x + 4 * mm, y_b, inv.customer_name)
+        c.drawString(bill_x + 4 * mm, y_b, _as_text(inv.customer_name))
         y_b -= 6 * mm
     if getattr(inv, "customer_address", ""):
-        c.drawString(bill_x + 4 * mm, y_b, inv.customer_address[:48])
+        c.drawString(bill_x + 4 * mm, y_b, _as_text(inv.customer_address)[:48])
         y_b -= 6 * mm
-    cp_c = (getattr(inv, "customer_postal_code", "") or "").strip()
+    cp_c = _as_text((getattr(inv, "customer_postal_code", "") or "")).strip()
     if cp_c:
         c.drawString(bill_x + 4 * mm, y_b, cp_c)
         
-    email = (getattr(inv, "customer_email", "") or "").strip()
-    phone = (getattr(inv, "customer_phone", "") or "").strip()
+    email = _as_text((getattr(inv, "customer_email", "") or "")).strip()
+    phone = _as_text((getattr(inv, "customer_phone", "") or "")).strip()
 
     if phone:
         y_b -= 6 * mm
@@ -284,6 +292,8 @@ def render_invoice_pdf(
     # Message
     c.setFont("Helvetica", 10)
     c.drawString(left, bottom, "Merci pour votre confiance.")
+
+    print("DEBUG types:", type(s.get("garage_name")), type(inv.customer_name), type(inv.date))
 
     c.save()
     return PdfResult(pdf_path=out_path)

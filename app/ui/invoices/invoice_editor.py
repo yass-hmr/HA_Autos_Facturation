@@ -27,42 +27,13 @@ from app.db.repos.invoice_repo import InvoiceRepository
 from app.db.repos.pdf_repo import PdfExportRepository
 from app.utils.paths import exports_dir
 from app.pdf.render_invoice import render_invoice_pdf
+from app.utils.dates import today_fr, fr_to_iso, iso_to_fr
+
 
 
 # =========================
 # Helpers date FR <-> ISO
 # =========================
-_DATE_FR_RE = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
-
-
-def today_fr() -> str:
-    return _date.today().strftime("%d/%m/%Y")
-
-
-def fr_to_iso(d: str) -> str:
-    d = (d or "").strip()
-    if not d:
-        return _date.today().isoformat()
-    m = _DATE_FR_RE.match(d)
-    if not m:
-        raise ValueError("Date invalide. Format attendu : jj/mm/aaaa")
-    dd, mm, yyyy = m.groups()
-    dt = datetime(int(yyyy), int(mm), int(dd))  # valide la date
-    return dt.date().isoformat()
-
-
-def iso_to_fr(d: str) -> str:
-    d = (d or "").strip()
-    if not d:
-        return today_fr()
-    if _DATE_FR_RE.match(d):
-        return d
-    try:
-        y, m, dd = d.split("-")
-        return f"{dd}/{m}/{y}"
-    except Exception:
-        return d
-
 
 def _safe_filename_part(s: str) -> str:
     s = (s or "").strip()
@@ -101,7 +72,9 @@ class InvoiceEditorWidget(QWidget):
     """
 
     # Optionnel : si tu veux mettre à jour le titre d’onglet depuis MainWindow
-    titleChanged = Signal(str)
+    tab_title_changed = Signal(str)
+    invoice_persisted = Signal(int)
+    closed = Signal()
 
     def __init__(
         self,
@@ -238,6 +211,7 @@ class InvoiceEditorWidget(QWidget):
             # crée une facture vide avec date du jour ISO
             new_id = self.repo.create_draft(_date.today().isoformat())
             self.invoice_id = new_id
+            self.invoice_persisted.emit(new_id)
 
         self._load_invoice()
         self._emit_title()
@@ -455,6 +429,7 @@ class InvoiceEditorWidget(QWidget):
 
             self.backup.mark_dirty()
             self._emit_title()
+            self.invoice_persisted.emit(self.invoice_id)
         except Exception as e:
             QMessageBox.warning(self, "Enregistrer", str(e))
 
@@ -517,4 +492,12 @@ class InvoiceEditorWidget(QWidget):
         # Onglet = "Facture" par défaut, puis "Facture - <num>" si dispo
         num = (self.number_edit.text() or "").strip()
         title = "Facture" if not num else f"Facture - {num}"
-        self.titleChanged.emit(title)
+        self.tab_title_changed.emit(title)
+
+
+
+    def closeEvent(self, event) -> None:
+        try:
+            self.closed.emit()
+        finally:
+            super().closeEvent(event)

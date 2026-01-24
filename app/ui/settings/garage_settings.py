@@ -98,10 +98,8 @@ class GarageSettingsWidget(QWidget):
         self.last_backup_label.setText(
             f"Dernière sauvegarde : {last_backup or '—'}"
         )
-
-    def set_status(self, msg: str) -> None:
-        self.status_label.setText(f"Statut : {msg}")
-
+        self.refresh_last_backup()
+        
     def refresh_last_backup(self) -> None:
         data = self.repo.get()
         self.last_backup_label.setText(

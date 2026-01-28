@@ -79,6 +79,21 @@ class InvoiceRepository:
             )
             for row in cur.fetchall()
         ]
+        
+    def next_invoice_number(self) -> str:
+        row = self.conn.execute(
+            "SELECT value FROM counter WHERE key = 'invoice_number'"
+        ).fetchone()
+        if not row:
+            raise RuntimeError("Compteur invoice_number introuvable (table counter).")
+        return f"{int(row['value']):03d}"
+
+
+    def bump_invoice_number(self) -> None:
+        self.conn.execute(
+            "UPDATE counter SET value = value + 1 WHERE key = 'invoice_number'"
+        )
+
 
     def create_draft(self, date_iso: str) -> int:
         """
@@ -187,29 +202,34 @@ class InvoiceRepository:
         customer_name: str,
         customer_address: str,
         customer_postal_code: str,
-        customer_email: str,
         customer_phone: str,
+        customer_email: str,
         subtotal_cents: int,
         vat_rate: int,
         vat_cents: int,
         total_cents: int,
-        lines: List[Tuple[int, str, str, int, int]],
+        lines: list[tuple],
     ) -> None:
         now = datetime.now().isoformat(timespec="seconds")
 
         number = (number or "").strip()
-        number_db = number if number else None
+
+        # 🔁 AUTO-INCRÉMENT SI NUMÉRO VIDE
+        if not number:
+            number = self.next_invoice_number()
+            self.bump_invoice_number()
 
         self.conn.execute(
             """
             UPDATE invoice
-            SET number = ?,
+            SET
+                number = ?,
                 date = ?,
                 customer_name = ?,
                 customer_address = ?,
                 customer_postal_code = ?,
-                customer_email = ?,
                 customer_phone = ?,
+                customer_email = ?,
                 subtotal_cents = ?,
                 vat_rate = ?,
                 vat_cents = ?,
@@ -218,45 +238,44 @@ class InvoiceRepository:
             WHERE id = ?
             """,
             (
-                number_db,
+                number,
                 date_iso,
                 customer_name.strip(),
                 customer_address.strip(),
                 customer_postal_code.strip(),
-                customer_email.strip(),
                 customer_phone.strip(),
+                customer_email.strip(),
                 int(subtotal_cents),
                 int(vat_rate),
                 int(vat_cents),
                 int(total_cents),
                 now,
-                int(invoice_id),
+                invoice_id,
             ),
         )
 
-        # Remplacer toutes les lignes (simple et fiable)
+        # 🔁 Lignes
         self.conn.execute("DELETE FROM invoice_line WHERE invoice_id = ?", (invoice_id,))
-
-        for idx, (qty, reference, desc, up_cents, lt_cents) in enumerate(lines, start=1):
+        for pos, (qty, ref, desc, unit_cents, total_cents) in enumerate(lines, start=1):
             self.conn.execute(
                 """
-                INSERT INTO invoice_line (
-                    invoice_id, position, qty, reference, description, unit_price_cents, line_total_cents
-                )
+                INSERT INTO invoice_line
+                (invoice_id, position, qty, reference, description, unit_price_cents, line_total_cents)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    int(invoice_id),
-                    int(idx),
+                    invoice_id,
+                    pos,
                     int(qty),
-                    (reference or "").strip(),
-                    (desc or "").strip(),
-                    int(up_cents),
-                    int(lt_cents),
+                    ref.strip(),
+                    desc.strip(),
+                    int(unit_cents),
+                    int(total_cents),
                 ),
             )
 
         self.conn.commit()
+
 
     def _next_number(self) -> str:
         cur = self.conn.execute("SELECT value FROM counter WHERE key = 'invoice_number'")

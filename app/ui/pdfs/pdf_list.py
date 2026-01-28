@@ -266,7 +266,7 @@ class PdfListWidget(QWidget):
         body_lines = [
             "Bonjour,",
             "",
-            f"Veuillez trouver ci-joint votre facture : {inv_number}",
+            f"Veuillez trouver ci-joint votre facture.",
             "",
             "N’hésitez pas à nous contacter pour toute question ou information complémentaire.",
             "",

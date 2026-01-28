@@ -376,17 +376,16 @@ class InvoiceEditorWidget(QWidget):
         for r in range(self.table.rowCount()):
             qty = self._parse_qty(self._item_text(r, 0))
 
-            # On reprend la valeur brute via tooltip si possible (sinon text)
-            ref_item = self.table.item(r, 1)
-            desc_item = self.table.item(r, 2)
-            reference = (ref_item.toolTip() if ref_item and ref_item.toolTip() else self._item_text(r, 1)).strip()
-            description = (desc_item.toolTip() if desc_item and desc_item.toolTip() else self._item_text(r, 2)).strip()
+            # IMPORTANT: on enregistre le TEXTE ACTUEL (celui édité), pas le tooltip
+            reference = self._item_text(r, 1).strip()
+            description = self._item_text(r, 2).strip()
 
             up_cents = self._parse_eur_to_cents(self._item_text(r, 3))
             lt_cents = qty * up_cents
-            # On garde même les lignes vides si qty=0 ? -> ici on ignore les lignes totalement vides
+
             if qty == 0 and not reference and not description and up_cents == 0:
                 continue
+
             out.append((qty, reference, description, up_cents, lt_cents))
         return out
 
@@ -426,7 +425,12 @@ class InvoiceEditorWidget(QWidget):
                 total_cents=total_cents,
                 lines=lines,  # type: ignore[arg-type]
             )
-
+            
+            QMessageBox.information(
+                self,
+                "Facture",
+                "✅ Facture enregistrée avec succès."
+            )
             self.backup.mark_dirty()
             self._emit_title()
             self.invoice_persisted.emit(self.invoice_id)

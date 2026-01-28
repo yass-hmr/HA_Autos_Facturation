@@ -65,6 +65,7 @@ class MainWindow(QMainWindow):
         # =========================
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
+        self._open_invoice_editors: dict[int, InvoiceEditorWidget] = {}
         self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
         self.setCentralWidget(self.tabs)
 
@@ -114,20 +115,44 @@ class MainWindow(QMainWindow):
         self._open_invoice_editor(None if invoice_id == 0 else invoice_id)
 
     def _open_invoice_editor(self, invoice_id: int | None) -> None:
+        # Si on ouvre une facture existante déjà ouverte -> on focus l’onglet
+        if invoice_id is not None:
+            existing = self._open_invoice_editors.get(invoice_id)
+            if existing is not None:
+                existing_idx = self.tabs.indexOf(existing)
+                if existing_idx != -1:
+                    self.tabs.setCurrentIndex(existing_idx)
+                    return
+                # widget plus présent (onglet fermé) -> cleanup
+                self._open_invoice_editors.pop(invoice_id, None)
+
         editor = InvoiceEditorWidget(
             repo=self.invoice_repo,
             backup_scheduler=self.backup,
             pdf_repo=self.pdf_repo,
             invoice_id=invoice_id,
         )
+
         idx = self.tabs.addTab(editor, "Facture")
         self.tabs.setCurrentIndex(idx)
 
-        editor.tab_title_changed.connect(lambda title, i=idx: self._set_tab_title_safe(i, title))
-        editor.invoice_persisted.connect(lambda _id, i=idx: self._refresh_editor_title(i, editor))
-        editor.closed.connect(lambda i=idx: self._close_editor_tab(i))
+        # Mémorise seulement si facture existante
+        if invoice_id is not None:
+            self._open_invoice_editors[invoice_id] = editor
+
+        # Connexions : toujours retrouver l’index réel via indexOf(editor)
+        editor.tab_title_changed.connect(
+            lambda title, ed=editor: self._set_tab_title_safe(self.tabs.indexOf(ed), title)
+        )
+        editor.invoice_persisted.connect(
+            lambda _id, ed=editor: self._refresh_editor_title(self.tabs.indexOf(ed), ed)
+        )
+        editor.closed.connect(
+            lambda ed=editor: self._close_editor_tab(self.tabs.indexOf(ed))
+        )
 
         self._refresh_editor_title(idx, editor)
+
 
     def _refresh_editor_title(self, idx: int, editor: InvoiceEditorWidget) -> None:
         try:
@@ -140,14 +165,22 @@ class MainWindow(QMainWindow):
             self.tabs.setTabText(idx, title)
 
     def _close_editor_tab(self, idx: int) -> None:
-        if 0 <= idx < self.tabs.count():
-            w = self.tabs.widget(idx)
-            self.tabs.removeTab(idx)
-            if w is not None:
-                w.deleteLater()
+        if idx < 0:
+            return
 
-        self.invoice_list_tab.refresh()
-        self.pdf_list_tab.refresh()
+        w = self.tabs.widget(idx)
+
+        # Si c'est un InvoiceEditorWidget, on retire de la map
+        try:
+            inv_id = getattr(w, "invoice_id", None)
+            if inv_id is not None and self._open_invoice_editors.get(inv_id) is w:
+                self._open_invoice_editors.pop(inv_id, None)
+        except Exception:
+            pass
+
+        self.tabs.removeTab(idx)
+        w.deleteLater()
+
 
     def _on_tab_close_requested(self, index: int) -> None:
         if index in (self.idx_settings, self.idx_invoices, self.idx_pdfs):

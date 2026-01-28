@@ -172,10 +172,8 @@ class PdfListWidget(QWidget):
             QMessageBox.warning(self, "Ouvrir", f"Fichier introuvable : {pdf_path.resolve()}")
             return
 
-        try:
-            os.startfile(str(pdf_path))
-        except Exception as e:
-            QMessageBox.warning(self, "Ouvrir", str(e))
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(pdf_path)))
 
     def _delete_selected(self) -> None:
         pdf_id = self._selected_pdf_id()
@@ -264,11 +262,11 @@ class PdfListWidget(QWidget):
         g_phone = (s.get("garage_phone") or "").strip()
         g_siret = (s.get("garage_siret") or "").strip()
 
-        subject = f"Facture n°{inv_number} – {client_name}"
+        subject = f"{inv_number} – {client_name}"
         body_lines = [
             "Bonjour,",
             "",
-            f"Veuillez trouver ci-joint votre facture n°{inv_number}.",
+            f"Veuillez trouver ci-joint votre facture : {inv_number}",
             "",
             "N’hésitez pas à nous contacter pour toute question ou information complémentaire.",
             "",

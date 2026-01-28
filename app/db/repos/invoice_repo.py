@@ -81,28 +81,46 @@ class InvoiceRepository:
         ]
 
     def create_draft(self, date_iso: str) -> int:
+        """
+        Crée une facture en brouillon.
+        Version robuste : construit l'INSERT selon les colonnes réellement présentes
+        dans la table invoice (évite mismatch colonnes/valeurs).
+        """
         now = datetime.now().isoformat(timespec="seconds")
+
+        cols_in_db = {
+            r["name"] for r in self.conn.execute("PRAGMA table_info(invoice)").fetchall()
+        }
+
+        defaults = {
+            "number": None,
+            "date": date_iso,
+            "customer_name": "",
+            "customer_address": "",
+            "customer_postal_code": "",
+            "customer_phone": "",
+            "customer_email": "",
+            "subtotal_cents": 0,
+            "vat_rate": 20,
+            "vat_cents": 0,
+            "total_cents": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        cols = [c for c in defaults.keys() if c in cols_in_db]
+        values = [defaults[c] for c in cols]
+
+        placeholders = ", ".join(["?"] * len(cols))
+        col_list = ", ".join(cols)
+
         cur = self.conn.execute(
-            """
-            INSERT INTO invoice (
-                number, date,
-                customer_name, customer_address, customer_postal_code,
-                customer_email, customer_phone,
-                subtotal_cents, vat_rate, vat_cents, total_cents,
-                created_at, updated_at
-            )
-            VALUES (
-                NULL, ?, 'DRAFT',
-                '', '', '',
-                '', '',
-                0, 20, 0, 0,
-                ?, ?
-            )
-            """,
-            (date_iso, now, now),
+            f"INSERT INTO invoice ({col_list}) VALUES ({placeholders})",
+            tuple(values),
         )
         self.conn.commit()
         return int(cur.lastrowid)
+
 
     def get_header(self, invoice_id: int) -> InvoiceHeader:
         cur = self.conn.execute(

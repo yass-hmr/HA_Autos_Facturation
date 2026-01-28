@@ -166,7 +166,7 @@ def render_invoice_pdf(
     # FACTURER À (encadré à droite, sous date)
     # =========================
     bill_w = 60 * mm
-    bill_h = 46 * mm
+    bill_h = 43 * mm
     bill_x = right - bill_w
     bill_y = meta_y - bill_h - 5 * mm
 
